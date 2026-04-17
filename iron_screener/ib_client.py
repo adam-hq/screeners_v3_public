@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple, Union
 
+import pandas as pd
 from ib_insync import IB, Option, Stock
 
 logger = logging.getLogger(__name__)
@@ -88,9 +89,9 @@ class IBClient:
         finally:
             self._ib.cancelMktData(stock)
 
-    def get_option_chain(self, stock: Stock) -> Tuple[List[str], List[float]]:
+    def get_option_chain(self, stock: Stock) -> Tuple[pd.Series, pd.Series]:
         """
-        Return (sorted expirations, sorted strikes) for this underlying.
+        Return (sorted expirations, sorted strikes) as Series for this underlying.
 
         Uses SMART/CBOE consolidated chain when available; strikes apply across listed expirations.
         """
@@ -104,17 +105,23 @@ class IBClient:
             if d.exchange in ("SMART", "CBOE") and d.strikes and d.expirations:
                 exps = sorted(d.expirations)
                 strikes = sorted(float(s) for s in d.strikes)
-                return exps, strikes
+                return (
+                    pd.Series(exps, name="expiration"),
+                    pd.Series(strikes, dtype=float, name="strike"),
+                )
         for d in details:
             if d.strikes and d.expirations:
                 exps = sorted(d.expirations)
                 strikes = sorted(float(s) for s in d.strikes)
-                return exps, strikes
+                return (
+                    pd.Series(exps, name="expiration"),
+                    pd.Series(strikes, dtype=float, name="strike"),
+                )
         raise RuntimeError(f"No strikes/expirations in option params for {stock.symbol}")
 
     @staticmethod
     def nearest_monthly_expiration(
-        expirations: List[str],
+        expirations: Union[pd.Series, list],
         as_of: Optional[date] = None,
     ) -> Optional[str]:
         """
@@ -123,35 +130,41 @@ class IBClient:
         If none match, return the earliest future expiration string (any style).
         """
         as_of = as_of or date.today()
-        future: List[Tuple[date, str]] = []
-        for exp in expirations:
+        exp_s = pd.Series(expirations, dtype="string").dropna()
+        if exp_s.empty:
+            return None
+
+        rows = []
+        for exp in exp_s.astype(str).str.strip():
             try:
                 d = datetime.strptime(exp, "%Y%m%d").date()
             except ValueError:
                 continue
             if d > as_of:
-                future.append((d, exp))
+                rows.append({"expiration": exp, "dt": d})
 
-        if not future:
+        if not rows:
             return None
 
-        future.sort(key=lambda x: x[0])
+        df = pd.DataFrame(rows).sort_values("dt", kind="mergesort")
 
         def is_third_friday(d: date) -> bool:
             return d.weekday() == 4 and 15 <= d.day <= 21
 
-        for d, exp in future:
-            if is_third_friday(d):
-                return exp
-        # No monthly pattern matched; use nearest listed expiration
-        return future[0][1]
+        mask = df["dt"].map(is_third_friday)
+        if mask.any():
+            return str(df.loc[mask, "expiration"].iloc[0])
+        return str(df["expiration"].iloc[0])
 
     @staticmethod
-    def nearest_strike(strikes: List[float], target: float) -> float:
+    def nearest_strike(strikes: Union[pd.Series, list], target: float) -> float:
         """Choose the listed strike closest to target (ties: lower strike)."""
-        if not strikes:
+        s = pd.Series(strikes, dtype=float).dropna()
+        if s.empty:
             raise ValueError("Empty strike list")
-        return min(strikes, key=lambda s: (abs(s - target), s))
+        diff = (s - target).abs()
+        min_d = diff.min()
+        return float(s.loc[diff == min_d].min())
 
     def qualify_option(
         self,

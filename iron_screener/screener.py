@@ -4,15 +4,25 @@ Orchestrates per-ticker screening and CSV export for iron condor opportunities.
 
 from __future__ import annotations
 
-import csv
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Iterable, List, Optional
+
+import pandas as pd
 
 from iron_screener.ib_client import IBClient
 from iron_screener.iron_condor import IronCondor
 
 logger = logging.getLogger(__name__)
+
+RESULT_COLUMNS: List[str] = [
+    "Stock",
+    "Expiration",
+    "Strikes (LP/SP/SC/LC)",
+    "% Distance",
+    "Total Premium",
+    "R/R Ratio",
+]
 
 
 class Screener:
@@ -35,9 +45,9 @@ class Screener:
     def wing_width(self) -> float:
         return self._wing_width
 
-    def screen_ticker(self, symbol: str, distance_pct: float) -> Optional[Dict[str, Any]]:
+    def screen_ticker(self, symbol: str, distance_pct: float) -> Optional[pd.Series]:
         """
-        Return one result row dict for ``symbol``, or None if skipped.
+        Return one result row as a Series for ``symbol``, or None if skipped.
 
         ``distance_pct`` is fractional OTM for short legs, e.g. 0.10 => 10% below/above spot.
         """
@@ -97,51 +107,43 @@ class Screener:
 
         strikes_str = f"{long_put_k:g}/{short_put_k:g}/{short_call_k:g}/{long_call_k:g}"
 
-        return {
-            "Stock": sym,
-            "Expiration": exp,
-            "Strikes (LP/SP/SC/LC)": strikes_str,
-            "% Distance": round(distance_pct * 100.0, 4),
-            "Total Premium": round(net_credit, 4),
-            "R/R Ratio": round(rr, 6) if rr is not None else "",
-        }
+        return pd.Series(
+            {
+                "Stock": sym,
+                "Expiration": exp,
+                "Strikes (LP/SP/SC/LC)": strikes_str,
+                "% Distance": round(distance_pct * 100.0, 4),
+                "Total Premium": round(net_credit, 4),
+                "R/R Ratio": round(rr, 6) if rr is not None else pd.NA,
+            }
+        )
 
     def run(
         self,
-        tickers: List[str],
+        tickers: Iterable[str],
         distance_pct: float,
         output_path: str = "ic_opportunities.csv",
-    ) -> List[Dict[str, Any]]:
+    ) -> pd.DataFrame:
         """
         Screen all tickers and write ``output_path`` (CSV).
 
-        Returns the list of row dicts successfully produced.
+        Returns a DataFrame of successfully screened rows (empty if none).
         """
-        rows: List[Dict[str, Any]] = []
+        rows: List[pd.Series] = []
         for raw in tickers:
             sym = raw.strip()
             if not sym:
                 continue
             try:
                 row = self.screen_ticker(sym, distance_pct)
-                if row:
+                if row is not None:
                     rows.append(row)
             except Exception as e:
                 logger.error("Failed to screen %s: %s", sym, e, exc_info=False)
 
+        df = pd.DataFrame(rows, columns=RESULT_COLUMNS) if rows else pd.DataFrame(columns=RESULT_COLUMNS)
         path = Path(output_path)
-        fieldnames = [
-            "Stock",
-            "Expiration",
-            "Strikes (LP/SP/SC/LC)",
-            "% Distance",
-            "Total Premium",
-            "R/R Ratio",
-        ]
-        with path.open("w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=fieldnames)
-            w.writeheader()
-            w.writerows(rows)
+        df.to_csv(path, index=False, encoding="utf-8")
 
-        logger.info("Wrote %s row(s) to %s", len(rows), path.resolve())
-        return rows
+        logger.info("Wrote %s row(s) to %s", len(df), path.resolve())
+        return df
