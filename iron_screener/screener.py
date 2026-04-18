@@ -10,7 +10,7 @@ from typing import Iterable, List, Optional
 
 import pandas as pd
 
-from iron_screener.ib_client import IBClient
+from iron_screener.yfinance_client import YFinanceClient
 from iron_screener.iron_condor import IronCondor
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class Screener:
 
     def __init__(
         self,
-        client: IBClient,
+        client: YFinanceClient,
         wing_width: float = 5.0,
         mkt_data_wait: float = 15.0,
     ) -> None:
@@ -55,11 +55,14 @@ class Screener:
         stock = self._client.qualify_stock(sym)
         spot = self._client.get_underlying_mid(stock, wait_seconds=self._mkt_data_wait)
 
-        expirations, strikes = self._client.get_option_chain(stock)
+        expirations = self._client.get_expirations(stock)
         exp = self._client.nearest_monthly_expiration(expirations)
         if not exp:
             logger.warning("%s: no future expirations in chain.", sym)
             return None
+
+        chain_df = self._client.get_chain_df(stock, exp)
+        strikes = pd.Series(chain_df["strike"].unique(), dtype=float).sort_values(kind="mergesort")
 
         # Target short strikes from spot (puts below, calls above)
         target_sp = spot * (1.0 - distance_pct)
@@ -83,23 +86,18 @@ class Screener:
             )
             return None
 
-        lp = self._client.qualify_option(sym, exp, long_put_k, "P")
-        sp = self._client.qualify_option(sym, exp, short_put_k, "P")
-        sc = self._client.qualify_option(sym, exp, short_call_k, "C")
-        lc = self._client.qualify_option(sym, exp, long_call_k, "C")
-
-        mid_lp = self._client.get_option_mid(lp, wait_seconds=self._mkt_data_wait)
-        mid_sp = self._client.get_option_mid(sp, wait_seconds=self._mkt_data_wait)
-        mid_sc = self._client.get_option_mid(sc, wait_seconds=self._mkt_data_wait)
-        mid_lc = self._client.get_option_mid(lc, wait_seconds=self._mkt_data_wait)
+        mid_lp = self._client.leg_mid_from_chain(chain_df, long_put_k, "P")
+        mid_sp = self._client.leg_mid_from_chain(chain_df, short_put_k, "P")
+        mid_sc = self._client.leg_mid_from_chain(chain_df, short_call_k, "C")
+        mid_lc = self._client.leg_mid_from_chain(chain_df, long_call_k, "C")
 
         ic = IronCondor(
             symbol=sym,
             expiration=exp,
-            long_put=lp,
-            short_put=sp,
-            short_call=sc,
-            long_call=lc,
+            long_put_strike=long_put_k,
+            short_put_strike=short_put_k,
+            short_call_strike=short_call_k,
+            long_call_strike=long_call_k,
             wing_width=self._wing_width,
             distance_pct=distance_pct,
         )

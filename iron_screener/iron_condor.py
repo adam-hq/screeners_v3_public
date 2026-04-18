@@ -7,8 +7,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from ib_insync import Option
-
 
 @dataclass
 class IronCondor:
@@ -25,20 +23,20 @@ class IronCondor:
 
     symbol: str
     expiration: str
-    long_put: Option
-    short_put: Option
-    short_call: Option
-    long_call: Option
+    long_put_strike: float
+    short_put_strike: float
+    short_call_strike: float
+    long_call_strike: float
     wing_width: float
     distance_pct: float
 
     @property
     def strikes_lp_sp_sc_lc(self) -> tuple[float, float, float, float]:
         return (
-            float(self.long_put.strike),
-            float(self.short_put.strike),
-            float(self.short_call.strike),
-            float(self.long_call.strike),
+            float(self.long_put_strike),
+            float(self.short_put_strike),
+            float(self.short_call_strike),
+            float(self.long_call_strike),
         )
 
     @staticmethod
