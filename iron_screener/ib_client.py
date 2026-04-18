@@ -5,6 +5,8 @@ IBKR connection and market-data helpers for US equity options screening.
 from __future__ import annotations
 
 import logging
+import math
+import time
 from datetime import date, datetime
 from typing import Optional, Tuple, Union
 
@@ -12,6 +14,14 @@ import pandas as pd
 from ib_insync import IB, Option, Stock
 
 logger = logging.getLogger(__name__)
+
+
+def _positive_finite(x: object) -> bool:
+    try:
+        v = float(x)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(v) and v > 0
 
 
 class IBClient:
@@ -67,22 +77,25 @@ class IBClient:
             raise ValueError(f"Could not qualify stock contract for {symbol!r}")
         return qualified[0]
 
-    def get_underlying_mid(self, stock: Stock, wait_seconds: float = 2.0) -> float:
+    def get_underlying_mid(self, stock: Stock, wait_seconds: float = 15.0) -> float:
         """Mid price from bid/ask, or last/close fallback."""
-        self._ib.reqMktData(stock, "", False, False)
+        t = self._ib.reqMktData(stock, "", False, False)
         try:
-            self._ib.waitOnUpdate(timeout=wait_seconds)
-            t = stock.ticker
-            if t is None:
-                raise RuntimeError("No ticker object after market data request.")
+            deadline = time.monotonic() + wait_seconds
+            while time.monotonic() < deadline:
+                self._ib.waitOnUpdate(timeout=min(1.0, deadline - time.monotonic()))
+                if t is None:
+                    raise RuntimeError("No ticker object after market data request.")
+                bid = t.bid
+                ask = t.ask
+                if _positive_finite(bid) and _positive_finite(ask):
+                    return float((bid + ask) / 2)
+                if _positive_finite(getattr(t, "last", None)):
+                    return float(t.last)
+                if _positive_finite(getattr(t, "close", None)):
+                    return float(t.close)
             bid = t.bid
             ask = t.ask
-            if bid and ask and bid > 0 and ask > 0:
-                return float((bid + ask) / 2)
-            if t.last and t.last > 0:
-                return float(t.last)
-            if t.close and t.close > 0:
-                return float(t.close)
             raise RuntimeError(
                 f"No usable price for {stock.symbol}: bid={bid} ask={ask} last={t.last}"
             )
@@ -185,22 +198,25 @@ class IBClient:
             )
         return qualified[0]
 
-    def get_option_mid(self, contract: Option, wait_seconds: float = 2.0) -> float:
+    def get_option_mid(self, contract: Option, wait_seconds: float = 15.0) -> float:
         """Bid/ask mid for one option; falls back to last/close."""
-        self._ib.reqMktData(contract, "", False, False)
+        t = self._ib.reqMktData(contract, "", False, False)
         try:
-            self._ib.waitOnUpdate(timeout=wait_seconds)
-            t = contract.ticker
-            if t is None:
-                raise RuntimeError("No ticker on option contract.")
+            deadline = time.monotonic() + wait_seconds
+            while time.monotonic() < deadline:
+                self._ib.waitOnUpdate(timeout=min(1.0, deadline - time.monotonic()))
+                if t is None:
+                    raise RuntimeError("No ticker on option contract.")
+                bid = t.bid
+                ask = t.ask
+                if _positive_finite(bid) and _positive_finite(ask):
+                    return float((bid + ask) / 2)
+                if _positive_finite(getattr(t, "last", None)):
+                    return float(t.last)
+                if _positive_finite(getattr(t, "close", None)):
+                    return float(t.close)
             bid = t.bid
             ask = t.ask
-            if bid and ask and bid > 0 and ask > 0:
-                return float((bid + ask) / 2)
-            if t.last and t.last > 0:
-                return float(t.last)
-            if t.close and t.close > 0:
-                return float(t.close)
             raise RuntimeError(
                 f"No price for {contract.localSymbol}: bid={bid} ask={ask}"
             )

@@ -10,8 +10,12 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
+
+# eventkit (ib_insync) expects an event loop before import on some Python versions
+asyncio.set_event_loop(asyncio.new_event_loop())
 
 from iron_screener.ib_client import IBClient
 from iron_screener.screener import Screener
@@ -24,8 +28,8 @@ def main() -> int:
     )
 
     # --- Input: US stock tickers (NYSE/NASDAQ via SMART routing) ---
-    tickers = ["TSLA", "AMZN", "GOOGL", "AAPL", "MSFT", "WMT"]
-
+    #tickers = ["TSLA", "AMZN", "GOOGL", "AAPL", "MSFT", "WMT"]
+    tickers = ["GOOGL"]
     # Short legs: this fraction away from spot (0.10 = 10% OTM put / 10% OTM call)
     distance_pct = 0.10
 
@@ -34,8 +38,8 @@ def main() -> int:
 
     # IBKR connection (TWS paper default)
     host = "127.0.0.1"
-    port = 7497
-    client_id = 7
+    port = 7496
+    client_id = 1
 
     output_csv = "ic_opportunities.csv"
 

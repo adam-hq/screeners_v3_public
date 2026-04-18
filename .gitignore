@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# local outputs
+ic_opportunities.csv
+
+# local virtualenvs
+ibkr_venv/
+.venv/
+venv/
+

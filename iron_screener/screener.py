@@ -35,7 +35,7 @@ class Screener:
         self,
         client: IBClient,
         wing_width: float = 5.0,
-        mkt_data_wait: float = 2.0,
+        mkt_data_wait: float = 15.0,
     ) -> None:
         self._client = client
         self._wing_width = wing_width
