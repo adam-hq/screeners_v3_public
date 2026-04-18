@@ -5,7 +5,7 @@ __pycache__/
 .mypy_cache/
 
 # local outputs
-ic_opportunities.csv
+*.csv
 
 # local virtualenvs
 ibkr_venv/
