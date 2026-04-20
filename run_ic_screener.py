@@ -38,6 +38,19 @@ def _parse_distances(s: str) -> List[float]:
     return out
 
 
+def _parse_wing_widths(s: str) -> List[float]:
+    """
+    Parse comma-separated wing widths.
+    Accepts: "2.5, 5, 10"
+    """
+    out: List[float] = []
+    for raw in _parse_csv_list(s):
+        try:
+            out.append(float(raw))
+        except ValueError:
+            pass
+    return out
+
 def main(argv: List[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="yfinance iron condor screener")
     p.add_argument(
@@ -46,9 +59,21 @@ def main(argv: List[str] | None = None) -> int:
         help="Comma-separated symbols (e.g. TSLA,AMZN,GOOGL)",
     )
     p.add_argument(
-        "--expiry",
-        default=None,
-        help="Option expiration in YYYY-MM-DD. If omitted, uses nearest monthly expiration.",
+        "--min-dte",
+        type=int,
+        default=15,
+        help="Minimum Days to Expiry (DTE).",
+    )
+    p.add_argument(
+        "--max-dte",
+        type=int,
+        default=45,
+        help="Maximum Days to Expiry (DTE).",
+    )
+    p.add_argument(
+        "--monthly-only",
+        action="store_true",
+        help="If set, only evaluates major monthly expirations (3rd Friday).",
     )
     p.add_argument(
         "--distances",
@@ -56,10 +81,9 @@ def main(argv: List[str] | None = None) -> int:
         help="Comma-separated distances as percent or fraction (e.g. 3,5,10 or 0.03,0.05)",
     )
     p.add_argument(
-        "--wing-width",
-        type=float,
-        default=5.0,
-        help="Wing width in dollars (default: 5.0)",
+        "--wing-widths",
+        default="2.5,5.0",
+        help="Comma-separated wing widths to evaluate (default: 2.5,5.0)",
     )
     p.add_argument(
         "--output",
@@ -80,14 +104,17 @@ def main(argv: List[str] | None = None) -> int:
 
     tickers = _parse_csv_list(args.symbols)
     distances = _parse_distances(args.distances)
+    wing_widths = _parse_wing_widths(args.wing_widths)
 
     client = YFinanceClient()
-    screener = Screener(client, wing_width=float(args.wing_width))
+    screener = Screener(client, wing_widths=wing_widths)
     screener.run(
         tickers,
         distance_pcts=distances,
         output_path=str(args.output),
-        expiry=(str(args.expiry).strip() if args.expiry else None),
+        min_dte=args.min_dte,
+        max_dte=args.max_dte,
+        monthly_only=args.monthly_only,
     )
 
     return 0

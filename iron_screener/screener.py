@@ -15,21 +15,29 @@ from iron_screener.iron_condor import IronCondor
 
 logger = logging.getLogger(__name__)
 
+
+def is_third_friday(date_obj: pd.Timestamp) -> bool:
+    """Checks if a given date is the third Friday of its month."""
+    return date_obj.weekday() == 4 and 15 <= date_obj.day <= 21
+
+
 RESULT_COLUMNS: List[str] = [
     "Stock",
     "Expiration",
+    "DTE",
+    "Wing Width",
     "% Distance",
     "LP Strike",
     "SP Strike",
     "SC Strike",
     "LC Strike",
+    "Premium",
+    "Max Risk",
+    "Premium/Wing Ratio",
     "LP Mid",
     "SP Mid",
     "SC Mid",
     "LC Mid",
-    "Net Credit",
-    "Max Risk",
-    "R/R Ratio",
 ]
 
 
@@ -42,201 +50,113 @@ class Screener:
     def __init__(
         self,
         client: YFinanceClient,
-        wing_width: float = 5.0,
+        wing_widths: List[float],
         mkt_data_wait: float = 15.0,
     ) -> None:
         self._client = client
-        self._wing_width = wing_width
+        self._wing_widths = sorted(wing_widths)
         self._mkt_data_wait = mkt_data_wait
-
-    @property
-    def wing_width(self) -> float:
-        return self._wing_width
-
-    def screen_ticker(
-        self,
-        symbol: str,
-        distance_pct: float,
-        expiry: Optional[str] = None,
-    ) -> Optional[pd.Series]:
-        """
-        Return one result row as a Series for ``symbol``, or None if skipped.
-
-        ``distance_pct`` is fractional OTM for short legs, e.g. 0.10 => 10% below/above spot.
-        """
-        sym = symbol.upper().strip()
-        stock = self._client.qualify_stock(sym)
-        spot = self._client.get_underlying_mid(stock, wait_seconds=self._mkt_data_wait)
-
-        expirations = self._client.get_expirations(stock)
-        exp = expiry.strip() if expiry else self._client.nearest_monthly_expiration(expirations)
-        if not exp:
-            logger.warning("%s: no future expirations in chain.", sym)
-            return None
-        if expiry:
-            exp_set = set(expirations.astype(str).tolist())
-            if exp not in exp_set:
-                logger.warning("%s: expiry %s not available; skipping.", sym, exp)
-                return None
-
-        chain_df = self._client.get_chain_df(stock, exp)
-        strikes = pd.Series(chain_df["strike"].unique(), dtype=float).sort_values(kind="mergesort")
-
-        # Target short strikes from spot (puts below, calls above)
-        target_sp = spot * (1.0 - distance_pct)
-        target_sc = spot * (1.0 + distance_pct)
-        short_put_k = self._client.nearest_strike(strikes, target_sp)
-        short_call_k = self._client.nearest_strike(strikes, target_sc)
-
-        target_lp = short_put_k - self._wing_width
-        target_lc = short_call_k + self._wing_width
-        long_put_k = self._client.nearest_strike(strikes, target_lp)
-        long_call_k = self._client.nearest_strike(strikes, target_lc)
-
-        if not (long_put_k < short_put_k < short_call_k < long_call_k):
-            logger.warning(
-                "%s: invalid strike ordering LP=%s SP=%s SC=%s LC=%s — skipping.",
-                sym,
-                long_put_k,
-                short_put_k,
-                short_call_k,
-                long_call_k,
-            )
-            return None
-
-        mid_lp = self._client.leg_mid_from_chain(chain_df, long_put_k, "P")
-        mid_sp = self._client.leg_mid_from_chain(chain_df, short_put_k, "P")
-        mid_sc = self._client.leg_mid_from_chain(chain_df, short_call_k, "C")
-        mid_lc = self._client.leg_mid_from_chain(chain_df, long_call_k, "C")
-
-        ic = IronCondor(
-            symbol=sym,
-            expiration=exp,
-            long_put_strike=long_put_k,
-            short_put_strike=short_put_k,
-            short_call_strike=short_call_k,
-            long_call_strike=long_call_k,
-            wing_width=self._wing_width,
-            distance_pct=distance_pct,
-        )
-        net_credit, max_risk, rr = ic.metrics(mid_lp, mid_sp, mid_sc, mid_lc)
-
-        return pd.Series(
-            {
-                "Stock": sym,
-                "Expiration": exp,
-                "% Distance": round(distance_pct * 100.0, 4),
-                "LP Strike": float(long_put_k),
-                "SP Strike": float(short_put_k),
-                "SC Strike": float(short_call_k),
-                "LC Strike": float(long_call_k),
-                "LP Mid": round(float(mid_lp), 4),
-                "SP Mid": round(float(mid_sp), 4),
-                "SC Mid": round(float(mid_sc), 4),
-                "LC Mid": round(float(mid_lc), 4),
-                "Net Credit": round(float(net_credit), 4),
-                "Max Risk": round(float(max_risk), 4),
-                "R/R Ratio": round(rr, 6) if rr is not None else pd.NA,
-            }
-        )
 
     def screen_ticker_many(
         self,
         symbol: str,
         distance_pcts: Sequence[float],
-        expiry: Optional[str] = None,
+        min_dte: int,
+        max_dte: int,
+        monthly_only: bool,
     ) -> List[pd.Series]:
         """
-        Screen one symbol for multiple distances.
-
-        Returns a list of rows (some distances may be skipped if pricing is missing).
+        Screen one symbol for multiple distances, expirations, and wing widths.
         """
         sym = symbol.upper().strip()
         stock = self._client.qualify_stock(sym)
         spot = self._client.get_underlying_mid(stock, wait_seconds=self._mkt_data_wait)
 
-        expirations = self._client.get_expirations(stock)
-        exp = expiry.strip() if expiry else self._client.nearest_monthly_expiration(expirations)
-        if not exp:
+        all_expirations = self._client.get_expirations(stock)
+        if all_expirations is None or all_expirations.empty:
             logger.warning("%s: no future expirations in chain.", sym)
             return []
-        if expiry:
-            exp_set = set(expirations.astype(str).tolist())
-            if exp not in exp_set:
-                logger.warning("%s: expiry %s not available; skipping.", sym, exp)
-                return []
-
-        chain_df = self._client.get_chain_df(stock, exp)
-        strikes = pd.Series(chain_df["strike"].unique(), dtype=float).sort_values(kind="mergesort")
 
         rows: List[pd.Series] = []
-        for distance_pct in distance_pcts:
+        today = pd.Timestamp.now().normalize()
+
+        for exp_str in all_expirations:
             try:
-                # Target short strikes from spot (puts below, calls above)
-                target_sp = spot * (1.0 - float(distance_pct))
-                target_sc = spot * (1.0 + float(distance_pct))
-                short_put_k = self._client.nearest_strike(strikes, target_sp)
-                short_call_k = self._client.nearest_strike(strikes, target_sc)
+                exp_date = pd.to_datetime(exp_str)
+                dte = (exp_date - today).days
 
-                target_lp = short_put_k - self._wing_width
-                target_lc = short_call_k + self._wing_width
-                long_put_k = self._client.nearest_strike(strikes, target_lp)
-                long_call_k = self._client.nearest_strike(strikes, target_lc)
-
-                if not (long_put_k < short_put_k < short_call_k < long_call_k):
-                    logger.warning(
-                        "%s %.2f%%: invalid strike ordering LP=%s SP=%s SC=%s LC=%s — skipping.",
-                        sym,
-                        float(distance_pct) * 100.0,
-                        long_put_k,
-                        short_put_k,
-                        short_call_k,
-                        long_call_k,
-                    )
+                if not (min_dte <= dte <= max_dte):
                     continue
 
-                mid_lp = self._client.leg_mid_from_chain(chain_df, long_put_k, "P")
-                mid_sp = self._client.leg_mid_from_chain(chain_df, short_put_k, "P")
-                mid_sc = self._client.leg_mid_from_chain(chain_df, short_call_k, "C")
-                mid_lc = self._client.leg_mid_from_chain(chain_df, long_call_k, "C")
+                if monthly_only and not is_third_friday(exp_date):
+                    continue
 
-                ic = IronCondor(
-                    symbol=sym,
-                    expiration=exp,
-                    long_put_strike=long_put_k,
-                    short_put_strike=short_put_k,
-                    short_call_strike=short_call_k,
-                    long_call_strike=long_call_k,
-                    wing_width=self._wing_width,
-                    distance_pct=float(distance_pct),
+                logger.info("Processing %s for expiration %s (DTE: %d)", sym, exp_str, dte)
+                chain_df = self._client.get_chain_df(stock, exp_str)
+                strikes = pd.Series(chain_df["strike"].unique(), dtype=float).sort_values(
+                    kind="mergesort"
                 )
-                net_credit, max_risk, rr = ic.metrics(mid_lp, mid_sp, mid_sc, mid_lc)
 
-                rows.append(
-                    pd.Series(
-                        {
-                            "Stock": sym,
-                            "Expiration": exp,
-                            "% Distance": round(float(distance_pct) * 100.0, 4),
-                            "LP Strike": float(long_put_k),
-                            "SP Strike": float(short_put_k),
-                            "SC Strike": float(short_call_k),
-                            "LC Strike": float(long_call_k),
-                            "LP Mid": round(float(mid_lp), 4),
-                            "SP Mid": round(float(mid_sp), 4),
-                            "SC Mid": round(float(mid_sc), 4),
-                            "LC Mid": round(float(mid_lc), 4),
-                            "Net Credit": round(float(net_credit), 4),
-                            "Max Risk": round(float(max_risk), 4),
-                            "R/R Ratio": round(rr, 6) if rr is not None else pd.NA,
-                        }
-                    )
-                )
+                for distance_pct in distance_pcts:
+                    for wing_width in self._wing_widths:
+                        target_sp = spot * (1.0 - float(distance_pct))
+                        target_sc = spot * (1.0 + float(distance_pct))
+                        short_put_k = self._client.nearest_strike(strikes, target_sp)
+                        short_call_k = self._client.nearest_strike(strikes, target_sc)
+
+                        target_lp = short_put_k - wing_width
+                        target_lc = short_call_k + wing_width
+                        long_put_k = self._client.nearest_strike(strikes, target_lp)
+                        long_call_k = self._client.nearest_strike(strikes, target_lc)
+
+                        if not (long_put_k < short_put_k < short_call_k < long_call_k):
+                            continue
+
+                        mid_lp = self._client.leg_mid_from_chain(chain_df, long_put_k, "P")
+                        mid_sp = self._client.leg_mid_from_chain(chain_df, short_put_k, "P")
+                        mid_sc = self._client.leg_mid_from_chain(chain_df, short_call_k, "C")
+                        mid_lc = self._client.leg_mid_from_chain(chain_df, long_call_k, "C")
+
+                        ic = IronCondor(
+                            symbol=sym,
+                            expiration=exp_str,
+                            long_put_strike=long_put_k,
+                            short_put_strike=short_put_k,
+                            short_call_strike=short_call_k,
+                            long_call_strike=long_call_k,
+                            wing_width=wing_width,
+                            distance_pct=float(distance_pct),
+                        )
+                        net_credit, max_risk, _ = ic.metrics(mid_lp, mid_sp, mid_sc, mid_lc)
+                        prem_wing_ratio = (net_credit / wing_width) if wing_width > 0 else 0.0
+
+                        rows.append(
+                            pd.Series(
+                                {
+                                    "Stock": sym,
+                                    "Expiration": exp_str,
+                                    "DTE": dte,
+                                    "Wing Width": wing_width,
+                                    "% Distance": round(float(distance_pct) * 100.0, 4),
+                                    "LP Strike": float(long_put_k),
+                                    "SP Strike": float(short_put_k),
+                                    "SC Strike": float(short_call_k),
+                                    "LC Strike": float(long_call_k),
+                                    "Premium": round(float(net_credit), 4),
+                                    "Max Risk": round(float(max_risk), 4),
+                                    "Premium/Wing Ratio": round(prem_wing_ratio, 4),
+                                    "LP Mid": round(float(mid_lp), 4),
+                                    "SP Mid": round(float(mid_sp), 4),
+                                    "SC Mid": round(float(mid_sc), 4),
+                                    "LC Mid": round(float(mid_lc), 4),
+                                }
+                            )
+                        )
             except Exception as e:
                 logger.error(
-                    "Failed %s at distance %.2f%%: %s",
+                    "Failed processing %s for expiration %s: %s",
                     sym,
-                    float(distance_pct) * 100.0,
+                    exp_str,
                     e,
                     exc_info=False,
                 )
@@ -246,19 +166,16 @@ class Screener:
     def run(
         self,
         tickers: Iterable[str],
-        distance_pcts: Sequence[float] | float,
+        distance_pcts: Sequence[float],
         output_path: str = "ic_opportunities.csv",
-        expiry: Optional[str] = None,
+        min_dte: int = 15,
+        max_dte: int = 45,
+        monthly_only: bool = False,
     ) -> pd.DataFrame:
         """
         Screen all tickers and write ``output_path`` (CSV).
-
-        Returns a DataFrame of successfully screened rows (empty if none).
         """
-        if isinstance(distance_pcts, (int, float)):
-            dist_list: List[float] = [float(distance_pcts)]
-        else:
-            dist_list = [float(x) for x in distance_pcts]
+        dist_list = [float(x) for x in distance_pcts]
 
         rows: List[pd.Series] = []
         for raw in tickers:
@@ -266,7 +183,15 @@ class Screener:
             if not sym:
                 continue
             try:
-                rows.extend(self.screen_ticker_many(sym, dist_list, expiry=expiry))
+                rows.extend(
+                    self.screen_ticker_many(
+                        sym,
+                        dist_list,
+                        min_dte=min_dte,
+                        max_dte=max_dte,
+                        monthly_only=monthly_only,
+                    )
+                )
             except Exception as e:
                 logger.error("Failed to screen %s: %s", sym, e, exc_info=False)
 
