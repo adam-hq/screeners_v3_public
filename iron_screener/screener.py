@@ -38,6 +38,11 @@ RESULT_COLUMNS: List[str] = [
     "SP Mid",
     "SC Mid",
     "LC Mid",
+    "% SP Dist to Supp",
+    "% SC Dist to Res",
+    "ATR",
+    "Support",
+    "Resistance",
 ]
 
 
@@ -52,10 +57,14 @@ class Screener:
         client: YFinanceClient,
         wing_widths: List[float],
         mkt_data_wait: float = 15.0,
+        sr_lookback_days: int = 60,
+        atr_period: int = 14,
     ) -> None:
         self._client = client
         self._wing_widths = sorted(wing_widths)
         self._mkt_data_wait = mkt_data_wait
+        self._sr_lookback_days = sr_lookback_days
+        self._atr_period = atr_period
 
     def screen_ticker_many(
         self,
@@ -71,6 +80,12 @@ class Screener:
         sym = symbol.upper().strip()
         stock = self._client.qualify_stock(sym)
         spot = self._client.get_underlying_mid(stock, wait_seconds=self._mkt_data_wait)
+        
+        indicators = self._client.get_technical_indicators(
+            stock, 
+            sr_lookback=self._sr_lookback_days, 
+            atr_period=self._atr_period
+        )
 
         all_expirations = self._client.get_expirations(stock)
         if all_expirations is None or all_expirations.empty:
@@ -130,6 +145,15 @@ class Screener:
                         net_credit, max_risk, _ = ic.metrics(mid_lp, mid_sp, mid_sc, mid_lc)
                         prem_wing_ratio = (net_credit / wing_width) if wing_width > 0 else 0.0
 
+                        sp_dist_to_supp = (
+                            round(abs(float(short_put_k - indicators.support)) / float(indicators.support) * 100.0, 4) 
+                            if not pd.isna(indicators.support) and float(indicators.support) != 0 else pd.NA
+                        )
+                        sc_dist_to_res = (
+                            round(abs(float(short_call_k - indicators.resistance)) / float(indicators.resistance) * 100.0, 4) 
+                            if not pd.isna(indicators.resistance) and float(indicators.resistance) != 0 else pd.NA
+                        )
+
                         rows.append(
                             pd.Series(
                                 {
@@ -149,6 +173,11 @@ class Screener:
                                     "SP Mid": round(float(mid_sp), 4),
                                     "SC Mid": round(float(mid_sc), 4),
                                     "LC Mid": round(float(mid_lc), 4),
+                                    "% SP Dist to Supp": sp_dist_to_supp,
+                                    "% SC Dist to Res": sc_dist_to_res,
+                                    "ATR": round(indicators.atr, 4) if not pd.isna(indicators.atr) else pd.NA,
+                                    "Support": round(indicators.support, 4) if not pd.isna(indicators.support) else pd.NA,
+                                    "Resistance": round(indicators.resistance, 4) if not pd.isna(indicators.resistance) else pd.NA,
                                 }
                             )
                         )
@@ -196,6 +225,7 @@ class Screener:
                 logger.error("Failed to screen %s: %s", sym, e, exc_info=False)
 
         df = pd.DataFrame(rows, columns=RESULT_COLUMNS) if rows else pd.DataFrame(columns=RESULT_COLUMNS)
+
         path = Path(output_path)
         df.to_csv(path, index=False, encoding="utf-8")
 

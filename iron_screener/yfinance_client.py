@@ -12,6 +12,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Literal, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
@@ -25,6 +26,13 @@ class StockPrice:
     price: float
     as_of: Optional[datetime] = None
     source: str = "yfinance"
+
+
+@dataclass(frozen=True)
+class TechnicalIndicators:
+    atr: float
+    support: float
+    resistance: float
 
 
 def get_stock_price(symbol: str) -> StockPrice:
@@ -64,6 +72,43 @@ def get_stock_price(symbol: str) -> StockPrice:
             as_of = None
 
     return StockPrice(symbol=symbol.upper().strip(), price=float(price), as_of=as_of)
+
+
+def get_technical_indicators(symbol: str, sr_lookback: int = 60, atr_period: int = 14) -> TechnicalIndicators:
+    """
+    Fetch historical data once and calculate ATR, Support, and Resistance.
+    """
+    t = yf.Ticker(symbol.upper().strip())
+    # We need max(sr_lookback, atr_period) + 1 trading days. 
+    # Fetch "6mo" to ensure we have enough trading days (6 months is ~126 trading days).
+    hist = t.history(period="6mo", interval="1d")
+    
+    if hist is None or hist.empty or len(hist) < max(sr_lookback, atr_period) + 1:
+        return TechnicalIndicators(atr=float('nan'), support=float('nan'), resistance=float('nan'))
+
+    high = hist["High"]
+    low = hist["Low"]
+    close = hist["Close"]
+    prev_close = close.shift(1)
+
+    # True Range
+    tr1 = high - low
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    
+    # ATR (Wilder's Smoothing usually, but simple EMA is close enough/standard for some implementations. We'll use EMA here)
+    atr = tr.ewm(alpha=1/atr_period, adjust=False).mean().iloc[-1]
+
+    # Support / Resistance
+    support = low.tail(sr_lookback).min()
+    resistance = high.tail(sr_lookback).max()
+
+    return TechnicalIndicators(
+        atr=float(atr),
+        support=float(support),
+        resistance=float(resistance)
+    )
 
 
 def get_option_chain(symbol: str, expiry: str) -> pd.DataFrame:
@@ -224,6 +269,9 @@ class YFinanceClient:
 
     def qualify_stock(self, symbol: str) -> str:
         return symbol.upper().strip()
+
+    def get_technical_indicators(self, symbol: str, sr_lookback: int = 60, atr_period: int = 14) -> TechnicalIndicators:
+        return get_technical_indicators(symbol, sr_lookback, atr_period)
 
     def get_underlying_mid(self, stock: str, wait_seconds: float = 0.0) -> float:  # noqa: ARG002
         return float(get_stock_price(stock).price)

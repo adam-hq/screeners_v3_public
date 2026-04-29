@@ -153,10 +153,10 @@ if os.path.exists(output_csv) and os.path.getsize(output_csv) > 0:
 
             # --- Columns Display Toggle ---
             st.markdown("#### Display Options")
-            show_prices = st.toggle("Show Prices (LP Mid, SP Mid, LC Mid, SC Mid)", value=False)
+            show_more_information = st.toggle("Show more information", value=False)
             
-            columns_to_hide = ["LP Mid", "SP Mid", "LC Mid", "SC Mid"]
-            if not show_prices:
+            columns_to_hide = ["LP Mid", "SP Mid", "LC Mid", "SC Mid", "ATR", "Support", "Resistance"]
+            if not show_more_information:
                 filtered_df = filtered_df.drop(columns=[col for col in columns_to_hide if col in filtered_df.columns])
 
             # Display as a dataframe
