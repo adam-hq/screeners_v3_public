@@ -7,6 +7,7 @@ screening workflows where delayed quotes are acceptable.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -18,6 +19,17 @@ import yfinance as yf
 
 
 Right = Literal["C", "P"]
+
+
+def norm_cdf(x: float) -> float:
+    return (1.0 + math.erf(x / math.sqrt(2.0))) / 2.0
+
+
+def bs_put_delta(S: float, K: float, T: float, r: float, sigma: float) -> float:
+    if T <= 0 or sigma <= 0 or pd.isna(sigma):
+        return 0.0 if S >= K else -1.0
+    d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    return norm_cdf(d1) - 1.0
 
 
 @dataclass(frozen=True)
@@ -33,6 +45,9 @@ class TechnicalIndicators:
     atr: float
     support: float
     resistance: float
+    sma_200: float = float('nan')
+    rsi_14: float = float('nan')
+    lower_bollinger: float = float('nan')
 
 
 def get_stock_price(symbol: str) -> StockPrice:
@@ -79,9 +94,9 @@ def get_technical_indicators(symbol: str, sr_lookback: int = 60, atr_period: int
     Fetch historical data once and calculate ATR, Support, and Resistance.
     """
     t = yf.Ticker(symbol.upper().strip())
-    # We need max(sr_lookback, atr_period) + 1 trading days. 
-    # Fetch "6mo" to ensure we have enough trading days (6 months is ~126 trading days).
-    hist = t.history(period="6mo", interval="1d")
+    # We need max(sr_lookback, atr_period, 200) + 1 trading days. 
+    # Fetch "1y" to ensure we have enough trading days (1 year is ~252 trading days).
+    hist = t.history(period="1y", interval="1d")
     
     if hist is None or hist.empty or len(hist) < max(sr_lookback, atr_period) + 1:
         return TechnicalIndicators(atr=float('nan'), support=float('nan'), resistance=float('nan'))
@@ -104,10 +119,37 @@ def get_technical_indicators(symbol: str, sr_lookback: int = 60, atr_period: int
     support = low.tail(sr_lookback).min()
     resistance = high.tail(sr_lookback).max()
 
+    # SMA 200
+    if len(close) >= 200:
+        sma_200 = close.rolling(window=200).mean().iloc[-1]
+    else:
+        sma_200 = float('nan')
+
+    # RSI 14
+    if len(close) > atr_period:
+        delta = close.diff()
+        gain = (delta.where(delta > 0, 0)).ewm(alpha=1/atr_period, adjust=False).mean()
+        loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/atr_period, adjust=False).mean()
+        rs = gain / loss
+        rsi_14 = (100 - (100 / (1 + rs))).iloc[-1]
+    else:
+        rsi_14 = float('nan')
+
+    # Bollinger Bands (20-day, 2 std dev)
+    if len(close) >= 20:
+        sma_20 = close.rolling(window=20).mean()
+        std_20 = close.rolling(window=20).std()
+        lower_bollinger = (sma_20 - 2 * std_20).iloc[-1]
+    else:
+        lower_bollinger = float('nan')
+
     return TechnicalIndicators(
         atr=float(atr),
         support=float(support),
-        resistance=float(resistance)
+        resistance=float(resistance),
+        sma_200=float(sma_200),
+        rsi_14=float(rsi_14),
+        lower_bollinger=float(lower_bollinger)
     )
 
 
