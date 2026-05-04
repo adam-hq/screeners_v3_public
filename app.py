@@ -6,6 +6,7 @@ from datetime import datetime
 
 from run_ic_screener import main as run_ic_screener
 from run_csp_screener import main as run_csp_screener
+from iron_screener.yfinance_client import monthly_expirations
 
 # Set page config
 st.set_page_config(
@@ -109,11 +110,22 @@ with tab_ic:
                         stock_options = sorted(filtered_df['Stock'].dropna().unique().tolist())
                         selected_stocks = st.multiselect("Select Stock(s)", options=stock_options, default=stock_options, key="ic_stocks")
                         filtered_df = filtered_df[filtered_df['Stock'].isin(selected_stocks)]
-                
+
                     if not filtered_df.empty and 'DTE' in filtered_df.columns:
                         dte_options = sorted(filtered_df['DTE'].dropna().unique().tolist())
                         selected_dtes = st.multiselect("Select DTE(s)", options=dte_options, default=dte_options, key="ic_dtes")
                         filtered_df = filtered_df[filtered_df['DTE'].isin(selected_dtes)]
+
+                    major_only = st.toggle(
+                        "Major monthly expirations only",
+                        value=False,
+                        help="Filter results to only show standard monthly expirations from yfinance.",
+                        key="ic_major_only"
+                    )
+                    if major_only and 'Expiration' in filtered_df.columns:
+                        expiry_values = filtered_df['Expiration'].astype(str).tolist()
+                        monthly_set = set(monthly_expirations(expiry_values, None))
+                        filtered_df = filtered_df[filtered_df['Expiration'].astype(str).isin(monthly_set)]
 
                 with filter_right:
                     if not filtered_df.empty and '% Distance' in filtered_df.columns:

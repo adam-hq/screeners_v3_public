@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Literal, Optional, Tuple
 
@@ -218,42 +218,71 @@ def get_expirations(symbol: str) -> pd.Series:
     return pd.Series(exps, dtype="string", name="expiration")
 
 
+def _third_friday(year: int, month: int) -> date:
+    d = date(year, month, 15)
+    while d.weekday() != 4:
+        d += timedelta(days=1)
+    return d
+
+
+def _standard_monthly_expiration(year: int, month: int, expirations: set[str]) -> Optional[str]:
+    third = _third_friday(year, month)
+    third_iso = third.isoformat()
+    if third_iso in expirations:
+        return third_iso
+
+    candidates = [
+        exp for exp in expirations
+        if (date.fromisoformat(exp) < third and date.fromisoformat(exp) >= third - timedelta(days=7))
+    ]
+    if candidates:
+        return max(candidates)
+    return None
+
+
 def nearest_monthly_expiration(
     expirations: pd.Series | list,
     as_of: Optional[date] = None,
 ) -> Optional[str]:
     """
-    Pick the nearest future expiration whose date is the 3rd Friday (standard monthly).
+    Pick the nearest future expiration that represents the standard monthly expiry.
 
-    If none match, return the earliest future expiration string.
+    This may be the 3rd Friday or the prior trading day when the 3rd Friday is a market holiday.
     """
+    monthly_exps = monthly_expirations(expirations, as_of=as_of)
+    return monthly_exps[0] if monthly_exps else None
+
+
+def monthly_expirations(
+    expirations: pd.Series | list,
+    as_of: Optional[date] = None,
+) -> list[str]:
+    """Return all future standard monthly expirations from the provided list."""
     as_of = as_of or date.today()
     exp_s = pd.Series(expirations, dtype="string").dropna()
     if exp_s.empty:
-        return None
+        return []
 
-    rows = []
-    for exp in exp_s.astype(str).str.strip():
-        try:
-            d = datetime.strptime(exp, "%Y-%m-%d").date()
-        except ValueError:
-            # yfinance expirations are typically YYYY-MM-DD; ignore anything else
-            continue
-        if d > as_of:
-            rows.append({"expiration": exp, "dt": d})
+    expirations_set = {exp.strip() for exp in exp_s.astype(str) if exp.strip()}
+    future_exps = sorted(
+        exp for exp in expirations_set
+        if date.fromisoformat(exp) > as_of
+    )
+    if not future_exps:
+        return []
 
-    if not rows:
-        return None
+    months = sorted({
+        (date.fromisoformat(exp).year, date.fromisoformat(exp).month)
+        for exp in future_exps
+    })
 
-    df = pd.DataFrame(rows).sort_values("dt", kind="mergesort")
+    results: list[str] = []
+    for year, month in months:
+        monthly_exp = _standard_monthly_expiration(year, month, expirations_set)
+        if monthly_exp and monthly_exp not in results and date.fromisoformat(monthly_exp) > as_of:
+            results.append(monthly_exp)
 
-    def is_third_friday(d: date) -> bool:
-        return d.weekday() == 4 and 15 <= d.day <= 21
-
-    mask = df["dt"].map(is_third_friday)
-    if mask.any():
-        return str(df.loc[mask, "expiration"].iloc[0])
-    return str(df["expiration"].iloc[0])
+    return results
 
 
 def nearest_strike(strikes: pd.Series | list, target: float) -> float:
@@ -327,6 +356,10 @@ class YFinanceClient:
     @staticmethod
     def nearest_monthly_expiration(expirations: pd.Series | list, as_of: Optional[date] = None) -> Optional[str]:
         return nearest_monthly_expiration(expirations, as_of=as_of)
+
+    @staticmethod
+    def monthly_expirations(expirations: pd.Series | list, as_of: Optional[date] = None) -> list[str]:
+        return monthly_expirations(expirations, as_of=as_of)
 
     @staticmethod
     def nearest_strike(strikes: pd.Series | list, target: float) -> float:

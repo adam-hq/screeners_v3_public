@@ -6,13 +6,9 @@ from typing import Iterable, List, Sequence
 
 import pandas as pd
 
-from iron_screener.yfinance_client import YFinanceClient, bs_put_delta
+from iron_screener.yfinance_client import YFinanceClient, bs_put_delta, monthly_expirations
 
 logger = logging.getLogger(__name__)
-
-def is_third_friday(date_obj: pd.Timestamp) -> bool:
-    """Checks if a given date is the third Friday of its month."""
-    return date_obj.weekday() == 4 and 15 <= date_obj.day <= 21
 
 RESULT_COLUMNS: List[str] = [
     "Stock",
@@ -66,15 +62,19 @@ class CSPScreener:
         rows: List[pd.Series] = []
         today = pd.Timestamp.now().normalize()
 
+        monthly_dates = set()
+        if monthly_only:
+            monthly_dates = set(monthly_expirations(all_expirations, as_of=today.date()))
+
         for exp_str in all_expirations:
             try:
+                if monthly_only and exp_str not in monthly_dates:
+                    continue
+
                 exp_date = pd.to_datetime(exp_str)
                 dte = (exp_date - today).days
 
                 if not (min_dte <= dte <= max_dte):
-                    continue
-
-                if monthly_only and not is_third_friday(exp_date):
                     continue
 
                 logger.info("Processing %s for expiration %s (DTE: %d)", sym, exp_str, dte)
