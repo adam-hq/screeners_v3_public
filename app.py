@@ -247,6 +247,17 @@ with tab_csp:
                         selected_dtes = st.multiselect("Select DTE(s)", options=dte_options, default=dte_options, key="csp_dtes")
                         filtered_csp_df = filtered_csp_df[filtered_csp_df['DTE'].isin(selected_dtes)]
 
+                    major_only_csp = st.toggle(
+                        "Major monthly expirations only",
+                        value=False,
+                        help="Filter CSP results to only show standard monthly expirations from yfinance.",
+                        key="csp_major_only"
+                    )
+                    if major_only_csp and 'Expiration' in filtered_csp_df.columns:
+                        expiry_values = filtered_csp_df['Expiration'].astype(str).tolist()
+                        monthly_set = set(monthly_expirations(expiry_values, None))
+                        filtered_csp_df = filtered_csp_df[filtered_csp_df['Expiration'].astype(str).isin(monthly_set)]
+
                     if not filtered_csp_df.empty and 'Delta' in filtered_csp_df.columns:
                         valid_deltas = filtered_csp_df['Delta'].dropna()
                         if not valid_deltas.empty:
