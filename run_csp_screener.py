@@ -17,11 +17,11 @@ from iron_screener.yfinance_client import YFinanceClient
 from iron_screener.csp_screener import CSPScreener
 
 
-def _parse_csv_list(s: str) -> List[str]:
+def _parse_csv_list_csp(s: str) -> List[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
 
 
-def _parse_distances(s: str) -> List[float]:
+def _parse_distances_csp(s: str) -> List[float]:
     """
     Parse distances from CLI.
 
@@ -31,7 +31,7 @@ def _parse_distances(s: str) -> List[float]:
     - "3%, 5%, 10%" (percents)
     """
     out: List[float] = []
-    for raw in _parse_csv_list(s):
+    for raw in _parse_csv_list_csp(s):
         token = raw.replace("%", "").strip()
         v = float(token)
         out.append(v / 100.0 if v > 1.0 else v)
@@ -84,8 +84,8 @@ def main(argv: List[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    tickers = _parse_csv_list(args.symbols)
-    distances = _parse_distances(args.distances)
+    tickers = _parse_csv_list_csp(args.symbols)
+    distances = _parse_distances_csp(args.distances)
 
     client = YFinanceClient()
     screener = CSPScreener(client)

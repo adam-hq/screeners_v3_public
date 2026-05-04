@@ -128,25 +128,62 @@ with tab_ic:
                         filtered_df = filtered_df[filtered_df['Expiration'].astype(str).isin(monthly_set)]
 
                 with filter_right:
+                    # % Distance slider - updated after previous filters
                     if not filtered_df.empty and '% Distance' in filtered_df.columns:
                         min_dist = float(filtered_df['% Distance'].min())
                         max_dist = float(filtered_df['% Distance'].max())
+                        current_dist = st.session_state.get('ic_dist', (min_dist, max_dist))
+                        # Clamp current values to new range
+                        clamped_dist = (max(min_dist, current_dist[0]), min(max_dist, current_dist[1]))
                         if min_dist >= max_dist:
-                            dist_range = st.slider("% Distance Range", min_value=0.0, max_value=max_dist + 10.0, value=(min_dist, max_dist), key="ic_dist")
+                            dist_range = st.slider("% Distance Range", min_value=0.0, max_value=max_dist + 10.0, value=clamped_dist, key="ic_dist")
                         else:
-                            dist_range = st.slider("% Distance Range", min_value=min_dist, max_value=max_dist, value=(min_dist, max_dist), key="ic_dist")
+                            dist_range = st.slider("% Distance Range", min_value=min_dist, max_value=max_dist, value=clamped_dist, key="ic_dist")
                         filtered_df = filtered_df[(filtered_df['% Distance'] >= dist_range[0]) & (filtered_df['% Distance'] <= dist_range[1])]
                     
+                    # Premium/Wing Ratio slider - updated after % Distance filter
                     if not filtered_df.empty and 'Premium/Wing Ratio' in filtered_df.columns:
                         valid_ratios = filtered_df['Premium/Wing Ratio'].dropna()
                         if not valid_ratios.empty:
                             min_pw = float(valid_ratios.min())
                             max_pw = float(valid_ratios.max())
+                            current_pw = st.session_state.get('ic_pw', (min_pw, max_pw))
+                            clamped_pw = (max(min_pw, current_pw[0]), min(max_pw, current_pw[1]))
                             if min_pw >= max_pw:
-                                pw_range = st.slider("Premium/Wing Ratio", min_value=0.0, max_value=max_pw + 0.1, value=(min_pw, max_pw), key="ic_pw")
+                                pw_range = st.slider("Premium/Wing Ratio", min_value=0.0, max_value=max_pw + 0.1, value=clamped_pw, key="ic_pw")
                             else:
-                                pw_range = st.slider("Premium/Wing Ratio", min_value=min_pw, max_value=max_pw, value=(min_pw, max_pw), key="ic_pw")
+                                pw_range = st.slider("Premium/Wing Ratio", min_value=min_pw, max_value=max_pw, value=clamped_pw, key="ic_pw")
                             filtered_df = filtered_df[(filtered_df['Premium/Wing Ratio'] >= pw_range[0]) & (filtered_df['Premium/Wing Ratio'] <= pw_range[1])]
+
+                    # Max Risk/Premium slider - updated after Premium/Wing Ratio filter
+                    if not filtered_df.empty and 'Max Risk/Premium' in filtered_df.columns:
+                        valid_risk_premiums = filtered_df['Max Risk/Premium'].dropna()
+                        if not valid_risk_premiums.empty:
+                            min_rr = float(valid_risk_premiums.min())
+                            max_rr = float(valid_risk_premiums.max())
+                            current_rr = st.session_state.get('ic_rr', (min_rr, max_rr))
+                            clamped_rr = (max(min_rr, current_rr[0]), min(max_rr, current_rr[1]))
+                            if min_rr >= max_rr:
+                                rr_range = st.slider("Max Risk/Premium", min_value=min_rr, max_value=max_rr + 0.1, value=clamped_rr, key="ic_rr")
+                            else:
+                                rr_range = st.slider("Max Risk/Premium", min_value=min_rr, max_value=max_rr, value=clamped_rr, key="ic_rr")
+                            filtered_df = filtered_df[(filtered_df['Max Risk/Premium'] >= rr_range[0]) & (filtered_df['Max Risk/Premium'] <= rr_range[1])]
+
+                    # Smart filter toggle - applied last
+                    smart_filter = st.toggle(
+                        "Smart filter",
+                        value=False,
+                        help="If enabled, only show rows with Max Risk/Premium < 20, Premium/Wing Ratio between 0.2 and 0.4, and Distance > 5%.",
+                        key="ic_smart_filter"
+                    )
+                    if smart_filter:
+                        if not filtered_df.empty:
+                            filtered_df = filtered_df[
+                                (filtered_df['Max Risk/Premium'] < 20) &
+                                (filtered_df['Premium/Wing Ratio'] >= 0.2) &
+                                (filtered_df['Premium/Wing Ratio'] <= 0.4) &
+                                (filtered_df['% Distance'] > 5.0)
+                            ]
 
                 st.markdown("#### Display Options")
                 show_more_information = st.toggle("Show more information", value=False, key="ic_more_info")

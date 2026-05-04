@@ -1,20 +1,22 @@
 """
-Orchestrates per-ticker screening and CSV export for iron condor opportunities.
+Combined iron condor screener module.
+
+This file merges the previous `iron_screener.screener` and
+`iron_screener.iron_condor` modules into one unified implementation.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence
 
 import pandas as pd
 
 from iron_screener.yfinance_client import YFinanceClient, monthly_expirations
-from iron_screener.iron_condor import IronCondor
 
 logger = logging.getLogger(__name__)
-
 
 RESULT_COLUMNS: List[str] = [
     "Stock",
@@ -28,6 +30,7 @@ RESULT_COLUMNS: List[str] = [
     "LC Strike",
     "Premium",
     "Max Risk",
+    "Max Risk/Premium",
     "Premium/Wing Ratio",
     "LP Mid",
     "SP Mid",
@@ -39,6 +42,80 @@ RESULT_COLUMNS: List[str] = [
     "Support",
     "Resistance",
 ]
+
+
+@dataclass
+class IronCondor:
+    """
+    Four-leg options structure (all same expiration):
+
+    Strikes ascending: long_put < short_put < short_call < long_call
+
+    - Long put (LP): protective wing below short put
+    - Short put (SP): sold put
+    - Short call (SC): sold call
+    - Long call (LC): protective wing above short call
+    """
+
+    symbol: str
+    expiration: str
+    long_put_strike: float
+    short_put_strike: float
+    short_call_strike: float
+    long_call_strike: float
+    wing_width: float
+    distance_pct: float
+
+    @property
+    def strikes_lp_sp_sc_lc(self) -> tuple[float, float, float, float]:
+        return (
+            float(self.long_put_strike),
+            float(self.short_put_strike),
+            float(self.short_call_strike),
+            float(self.long_call_strike),
+        )
+
+    @staticmethod
+    def net_credit(
+        mid_lp: float,
+        mid_sp: float,
+        mid_sc: float,
+        mid_lc: float,
+    ) -> float:
+        """
+        Net credit received for opening the condor (positive = credit).
+
+        Short legs add premium; long legs subtract.
+        """
+        return mid_sp + mid_sc - mid_lp - mid_lc
+
+    @staticmethod
+    def max_risk(wing_width: float, net_credit: float) -> float:
+        """
+        Approximate max loss per condor for equal-width put/call spreads.
+        """
+        return wing_width - net_credit
+
+    @staticmethod
+    def risk_reward_ratio(net_credit: float, max_risk: float) -> Optional[float]:
+        if max_risk <= 0:
+            return None
+        return net_credit / max_risk
+
+    def metrics(
+        self,
+        mid_lp: float,
+        mid_sp: float,
+        mid_sc: float,
+        mid_lc: float,
+    ) -> tuple[float, float, Optional[float]]:
+        """
+        Return (net_credit, max_risk, risk_reward_ratio).
+        """
+        credit = self.net_credit(mid_lp, mid_sp, mid_sc, mid_lc)
+        risk = self.max_risk(self.wing_width, credit)
+        rr = self.risk_reward_ratio(credit, risk)
+        return credit, risk, rr
 
 
 class Screener:
@@ -75,11 +152,11 @@ class Screener:
         sym = symbol.upper().strip()
         stock = self._client.qualify_stock(sym)
         spot = self._client.get_underlying_mid(stock, wait_seconds=self._mkt_data_wait)
-        
+
         indicators = self._client.get_technical_indicators(
-            stock, 
-            sr_lookback=self._sr_lookback_days, 
-            atr_period=self._atr_period
+            stock,
+            sr_lookback=self._sr_lookback_days,
+            atr_period=self._atr_period,
         )
 
         all_expirations = self._client.get_expirations(stock)
@@ -143,13 +220,17 @@ class Screener:
                         )
                         net_credit, max_risk, _ = ic.metrics(mid_lp, mid_sp, mid_sc, mid_lc)
                         prem_wing_ratio = (net_credit / wing_width) if wing_width > 0 else 0.0
+                        max_risk_premium = (
+                            round(float(max_risk) / float(net_credit), 4)
+                            if float(net_credit) > 0 else pd.NA
+                        )
 
                         sp_dist_to_supp = (
-                            round(abs(float(short_put_k - indicators.support)) / float(indicators.support) * 100.0, 4) 
+                            round(-(float(short_put_k - indicators.support)) / float(indicators.support) * 100.0, 4)
                             if not pd.isna(indicators.support) and float(indicators.support) != 0 else pd.NA
                         )
                         sc_dist_to_res = (
-                            round(abs(float(short_call_k - indicators.resistance)) / float(indicators.resistance) * 100.0, 4) 
+                            round((float(short_call_k - indicators.resistance)) / float(indicators.resistance) * 100.0, 4)
                             if not pd.isna(indicators.resistance) and float(indicators.resistance) != 0 else pd.NA
                         )
 
@@ -167,6 +248,7 @@ class Screener:
                                     "LC Strike": float(long_call_k),
                                     "Premium": round(float(net_credit), 4),
                                     "Max Risk": round(float(max_risk), 4),
+                                    "Max Risk/Premium": max_risk_premium,
                                     "Premium/Wing Ratio": round(prem_wing_ratio, 4),
                                     "LP Mid": round(float(mid_lp), 4),
                                     "SP Mid": round(float(mid_sp), 4),

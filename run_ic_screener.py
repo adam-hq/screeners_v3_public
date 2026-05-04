@@ -14,14 +14,14 @@ import sys
 from typing import List
 
 from iron_screener.yfinance_client import YFinanceClient
-from iron_screener.screener import Screener
+from iron_screener.ic_screener import Screener
 
 
-def _parse_csv_list(s: str) -> List[str]:
+def _parse_csv_list_ic(s: str) -> List[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
 
 
-def _parse_distances(s: str) -> List[float]:
+def _parse_distances_ic(s: str) -> List[float]:
     """
     Parse distances from CLI.
 
@@ -31,20 +31,20 @@ def _parse_distances(s: str) -> List[float]:
     - "3%, 5%, 10%" (percents)
     """
     out: List[float] = []
-    for raw in _parse_csv_list(s):
+    for raw in _parse_csv_list_ic(s):
         token = raw.replace("%", "").strip()
         v = float(token)
         out.append(v / 100.0 if v > 1.0 else v)
     return out
 
 
-def _parse_wing_widths(s: str) -> List[float]:
+def _parse_wing_widths_ic(s: str) -> List[float]:
     """
     Parse comma-separated wing widths.
     Accepts: "2.5, 5, 10"
     """
     out: List[float] = []
-    for raw in _parse_csv_list(s):
+    for raw in _parse_csv_list_ic(s):
         try:
             out.append(float(raw))
         except ValueError:
@@ -102,9 +102,9 @@ def main(argv: List[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    tickers = _parse_csv_list(args.symbols)
-    distances = _parse_distances(args.distances)
-    wing_widths = _parse_wing_widths(args.wing_widths)
+    tickers = _parse_csv_list_ic(args.symbols)
+    distances = _parse_distances_ic(args.distances)
+    wing_widths = _parse_wing_widths_ic(args.wing_widths)
 
     client = YFinanceClient()
     screener = Screener(client, wing_widths=wing_widths)
