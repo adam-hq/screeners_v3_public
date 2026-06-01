@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-IronScreener — yfinance iron condor screener (delayed data, monthly expirations).
+CSPScreener — yfinance cash secured put screener (delayed data, monthly expirations).
 
 Usage:
-    python run_ic_screener.py --symbols TSLA,AMZN,GOOGL,AAPL,MSFT,WMT --distances 3,5,8,10,15,20
+    python run_csp_screener.py --symbols TSLA,AMZN,GOOGL,AAPL,MSFT,WMT --distances 3,5,8,10,15,20
 """
 
 from __future__ import annotations
@@ -14,14 +14,14 @@ import sys
 from typing import List
 
 from iron_screener.yfinance_client import YFinanceClient
-from iron_screener.ic_screener import Screener
+from iron_screener.csp_screener import CSPScreener
 
 
-def _parse_csv_list_ic(s: str) -> List[str]:
+def _parse_csv_list_csp(s: str) -> List[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
 
 
-def _parse_distances_ic(s: str) -> List[float]:
+def _parse_distances_csp(s: str) -> List[float]:
     """
     Parse distances from CLI.
 
@@ -31,28 +31,15 @@ def _parse_distances_ic(s: str) -> List[float]:
     - "3%, 5%, 10%" (percents)
     """
     out: List[float] = []
-    for raw in _parse_csv_list_ic(s):
+    for raw in _parse_csv_list_csp(s):
         token = raw.replace("%", "").strip()
         v = float(token)
         out.append(v / 100.0 if v > 1.0 else v)
     return out
 
 
-def _parse_wing_widths_ic(s: str) -> List[float]:
-    """
-    Parse comma-separated wing widths.
-    Accepts: "2.5, 5, 10"
-    """
-    out: List[float] = []
-    for raw in _parse_csv_list_ic(s):
-        try:
-            out.append(float(raw))
-        except ValueError:
-            pass
-    return out
-
 def main(argv: List[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="yfinance iron condor screener")
+    p = argparse.ArgumentParser(description="yfinance cash secured put screener")
     p.add_argument(
         "--symbols",
         default="TSLA,AMZN,GOOGL,AAPL,MSFT,WMT",
@@ -81,14 +68,9 @@ def main(argv: List[str] | None = None) -> int:
         help="Comma-separated distances as percent or fraction (e.g. 3,5,10 or 0.03,0.05)",
     )
     p.add_argument(
-        "--wing-widths",
-        default="2.5,5.0",
-        help="Comma-separated wing widths to evaluate (default: 2.5,5.0)",
-    )
-    p.add_argument(
         "--output",
-        default="ic_opportunities.csv",
-        help="Output CSV path (default: ic_opportunities.csv)",
+        default="csp_opportunities.csv",
+        help="Output CSV path (default: csp_opportunities.csv)",
     )
     p.add_argument(
         "--log-level",
@@ -102,12 +84,11 @@ def main(argv: List[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    tickers = _parse_csv_list_ic(args.symbols)
-    distances = _parse_distances_ic(args.distances)
-    wing_widths = _parse_wing_widths_ic(args.wing_widths)
+    tickers = _parse_csv_list_csp(args.symbols)
+    distances = _parse_distances_csp(args.distances)
 
     client = YFinanceClient()
-    screener = Screener(client, wing_widths=wing_widths)
+    screener = CSPScreener(client)
     screener.run(
         tickers,
         distance_pcts=distances,
