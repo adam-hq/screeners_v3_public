@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import sys
-import os
+import tempfile
 from datetime import datetime
+from pathlib import Path
 
 from run_ic_screener import main as run_ic_screener
 from run_csp_screener import main as run_csp_screener
@@ -20,9 +21,11 @@ st.title("Options Screener")
 
 tab_ic, tab_csp = st.tabs(["Iron Condor Screener", "Cash Secured Put Screener"])
 
-# Define output CSV in the same directory as this script
-output_ic_csv = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ic_opportunities.csv")
-output_csp_csv = os.path.join(os.path.dirname(os.path.abspath(__file__)), "csp_opportunities.csv")
+# Use a temporary directory for output because Streamlit Community Cloud may mount the app source as read-only.
+output_dir = Path(tempfile.gettempdir()) / "screeners_v3"
+output_dir.mkdir(parents=True, exist_ok=True)
+output_ic_csv = output_dir / "ic_opportunities.csv"
+output_csp_csv = output_dir / "csp_opportunities.csv"
 
 with tab_ic:
     st.header("Iron Condor Screener")
@@ -75,7 +78,7 @@ with tab_ic:
                     "--wing-widths", ic_wing_widths,
                     "--min-dte", str(ic_dte_range[0]),
                     "--max-dte", str(ic_dte_range[1]),
-                    "--output", output_ic_csv
+                    "--output", str(output_ic_csv)
                 ]
                 if ic_monthly_only:
                     ic_args.append("--monthly-only")
@@ -91,13 +94,13 @@ with tab_ic:
 
     # Display Results
     st.markdown("### Results")
-    if os.path.exists(output_ic_csv) and os.path.getsize(output_ic_csv) > 0:
+    if output_ic_csv.exists() and output_ic_csv.stat().st_size > 0:
         try:
             df = pd.read_csv(output_ic_csv)
             if df.empty:
                 st.warning("The screener ran successfully, but no opportunities were found matching your criteria.")
             else:
-                last_modified_time = os.path.getmtime(output_ic_csv)
+                last_modified_time = output_ic_csv.stat().st_mtime
                 last_updated = datetime.fromtimestamp(last_modified_time).strftime('%Y-%m-%d %H:%M:%S')
                 st.caption(f"Last Updated: {last_updated}")
 
@@ -243,7 +246,7 @@ with tab_csp:
                     "--distances", csp_distances,
                     "--min-dte", str(csp_dte_range[0]),
                     "--max-dte", str(csp_dte_range[1]),
-                    "--output", output_csp_csv
+                    "--output", str(output_csp_csv)
                 ]
                 if csp_monthly_only:
                     csp_args.append("--monthly-only")
@@ -259,13 +262,13 @@ with tab_csp:
 
     # Display Results
     st.markdown("### Results")
-    if os.path.exists(output_csp_csv) and os.path.getsize(output_csp_csv) > 0:
+    if output_csp_csv.exists() and output_csp_csv.stat().st_size > 0:
         try:
             df_csp = pd.read_csv(output_csp_csv)
             if df_csp.empty:
                 st.warning("The screener ran successfully, but no opportunities were found matching your criteria.")
             else:
-                last_modified_time = os.path.getmtime(output_csp_csv)
+                last_modified_time = output_csp_csv.stat().st_mtime
                 last_updated = datetime.fromtimestamp(last_modified_time).strftime('%Y-%m-%d %H:%M:%S')
                 st.caption(f"Last Updated: {last_updated}")
 
