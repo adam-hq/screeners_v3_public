@@ -1,9 +1,8 @@
 """
-IronScreener: screen US equities for iron condor opportunities via IBKR (ib_insync).
+IronScreener: screen US equities for iron condor opportunities via yfinance (delayed).
 """
 
-from iron_screener.ib_client import IBClient
-from iron_screener.iron_condor import IronCondor
-from iron_screener.screener import Screener
+from iron_screener.ic_screener import IronCondor, Screener
+from iron_screener.yfinance_client import YFinanceClient
 
-__all__ = ["IBClient", "IronCondor", "Screener"]
+__all__ = ["YFinanceClient", "IronCondor", "Screener"]

@@ -1,0 +1,16 @@
+# Virtual Environments
+venv/
+.venv/
+env/
+adam_venv/
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS and Editor Files
+.vscode/
+.idea/
+.DS_Store
