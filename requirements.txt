@@ -1,7 +1,8 @@
-pandas==2.0
+pandas>=2.1.0
 yfinance>=0.2.0
-numpy==1.22.4
-python-dateutil==2.8.2
-pytz==2020.1
-tzdata==2022.7
-streamlit==1.56.0
+numpy>=1.26.0
+python-dateutil>=2.8.2
+pytz>=2020.1
+tzdata>=2022.7
+streamlit>=1.35.0
+curl_cffi>=0.7.0
