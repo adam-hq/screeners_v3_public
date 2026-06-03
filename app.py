@@ -2,12 +2,69 @@ import streamlit as st
 import pandas as pd
 import sys
 import tempfile
+import traceback
 from datetime import datetime
 from pathlib import Path
 
 from run_ic_screener import main as run_ic_screener
 from run_csp_screener import main as run_csp_screener
 from iron_screener.yfinance_client import monthly_expirations
+
+
+def _ensure_session_messages(key: str) -> list[str]:
+    if key not in st.session_state:
+        st.session_state[key] = []
+    return st.session_state[key]
+
+
+def _add_diagnostic(key: str, message: str) -> None:
+    messages = _ensure_session_messages(key)
+    messages.append(message)
+
+
+def _run_screener_with_diagnostics(
+    run_fn,
+    args,
+    output_csv: Path,
+    diag_key: str,
+    screener_name: str,
+) -> int:
+    messages = _ensure_session_messages(diag_key)
+    messages.clear()
+
+    _add_diagnostic(diag_key, f"{screener_name}: output path = {output_csv}")
+
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        _add_diagnostic(diag_key, f"Output directory verified: {output_dir}")
+        test_path = output_dir / ".write_test"
+        test_path.write_text("ok", encoding="utf-8")
+        test_path.unlink()
+        _add_diagnostic(diag_key, "Write permission check passed.")
+    except Exception as exc:
+        tb = traceback.format_exc()
+        _add_diagnostic(diag_key, f"Output directory write check failed: {exc}\n{tb}")
+        return -1
+
+    try:
+        exit_code = run_fn(args)
+        _add_diagnostic(diag_key, f"Execution finished with exit code {exit_code}.")
+    except Exception as exc:
+        tb = traceback.format_exc()
+        _add_diagnostic(diag_key, f"Execution exception: {exc}\n{tb}")
+        return -1
+
+    if not output_csv.exists():
+        _add_diagnostic(diag_key, f"Output CSV not found: {output_csv}")
+    elif output_csv.stat().st_size == 0:
+        _add_diagnostic(diag_key, f"Output CSV exists but is empty: {output_csv}")
+    else:
+        _add_diagnostic(
+            diag_key,
+            f"Output CSV written successfully: {output_csv} ({output_csv.stat().st_size} bytes)",
+        )
+
+    return exit_code
 
 # Set page config
 st.set_page_config(
@@ -16,8 +73,11 @@ st.set_page_config(
     layout="wide"
 )
 
+APP_VERSION = "1.2"
+
 # Header
 st.title("Options Screener")
+st.caption(f"App version: {APP_VERSION}")
 
 tab_ic, tab_csp = st.tabs(["Iron Condor Screener", "Cash Secured Put Screener"])
 
@@ -83,14 +143,20 @@ with tab_ic:
                 if ic_monthly_only:
                     ic_args.append("--monthly-only")
                     
-                try:
-                    exit_code_ic = run_ic_screener(ic_args)
-                    if exit_code_ic == 0:
-                        st.success("IC Screener execution completed!")
-                    else:
-                        st.error(f"IC Screener finished with a non-zero exit code: {exit_code_ic}")
-                except Exception as e:
-                    st.error(f"An error occurred during execution: {e}")
+                exit_code_ic = _run_screener_with_diagnostics(
+                    run_ic_screener,
+                    ic_args,
+                    output_ic_csv,
+                    "ic_diagnostics",
+                    "IC Screener",
+                )
+
+                if exit_code_ic == 0 and output_ic_csv.exists() and output_ic_csv.stat().st_size > 0:
+                    st.success("IC Screener execution completed and generated output.")
+                elif exit_code_ic == -1:
+                    st.error("IC Screener failed during execution. See diagnostics below.")
+                else:
+                    st.warning("IC Screener finished but did not produce valid output. See diagnostics below.")
 
     # Display Results
     st.markdown("### Results")
@@ -202,6 +268,10 @@ with tab_ic:
     else:
         st.info("No IC results to display yet. Click 'Execute IC Screener' to generate data.")
 
+    with st.expander("IC Diagnostics", expanded=False):
+        for message in st.session_state.get("ic_diagnostics", []):
+            st.text(message)
+
 with tab_csp:
     st.header("Cash Secured Put Screener")
     
@@ -251,14 +321,20 @@ with tab_csp:
                 if csp_monthly_only:
                     csp_args.append("--monthly-only")
                     
-                try:
-                    exit_code_csp = run_csp_screener(csp_args)
-                    if exit_code_csp == 0:
-                        st.success("CSP Screener execution completed!")
-                    else:
-                        st.error(f"CSP Screener finished with a non-zero exit code: {exit_code_csp}")
-                except Exception as e:
-                    st.error(f"An error occurred during execution: {e}")
+                exit_code_csp = _run_screener_with_diagnostics(
+                    run_csp_screener,
+                    csp_args,
+                    output_csp_csv,
+                    "csp_diagnostics",
+                    "CSP Screener",
+                )
+
+                if exit_code_csp == 0 and output_csp_csv.exists() and output_csp_csv.stat().st_size > 0:
+                    st.success("CSP Screener execution completed and generated output.")
+                elif exit_code_csp == -1:
+                    st.error("CSP Screener failed during execution. See diagnostics below.")
+                else:
+                    st.warning("CSP Screener finished but did not produce valid output. See diagnostics below.")
 
     # Display Results
     st.markdown("### Results")
@@ -339,3 +415,7 @@ with tab_csp:
             st.error(f"Error reading results file: {e}")
     else:
         st.info("No CSP results to display yet. Click 'Execute CSP Screener' to generate data.")
+
+    with st.expander("CSP Diagnostics", expanded=False):
+        for message in st.session_state.get("csp_diagnostics", []):
+            st.text(message)
